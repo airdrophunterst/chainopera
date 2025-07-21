@@ -13,6 +13,10 @@ const { headers } = require("./core/header.js");
 const { showBanner } = require("./core/banner.js");
 const localStorage = require("./localStorage.json");
 const ethers = require("ethers");
+const { solveCaptcha } = require("./utils/captcha.js");
+const { jwtDecode } = require("jwt-decode");
+const Helper = require("./helper/helper.js");
+const Onchain = require("./onchain/onchain.js");
 const questions = loadData("questions.txt");
 const emails = [];
 const twitters = [];
@@ -34,7 +38,10 @@ class ClientAPI {
     this.token = null;
     this.localStorage = localStorage;
     this.wallet = new ethers.Wallet(this.itemData.privateKey);
-    this.apiKey = "c99bed7f3bad473eb888213b29ae3744";
+    this.provider = new ethers.JsonRpcProvider(settings.BASE_URL);
+    this.apiKey = null;
+    this.userData = null;
+    this.onService = new Onchain({ wallet: this.wallet, provider: this.provider });
   }
 
   #load_session_data() {
@@ -255,6 +262,7 @@ class ClientAPI {
       siweMessage: res.data,
       address: this.itemData.address,
       loginChannel: 4,
+      version: "v1",
     };
     return this.makeRequest(`${this.baseURL}/userCenter/api/v1/client/user/login`, "post", payload, {
       isAuth: true,
@@ -293,30 +301,55 @@ class ClientAPI {
     return this.makeRequest(`${this.baseURL}/userCenter/api/v1/ai/terminal/getPoints`, "get");
   }
 
-  async checkin() {
+  async checkin(payload) {
     //  userCenter/api/v1/ai/terminal/checkIn-v1
-    return this.makeRequest(`${this.baseURL}/api/agent/ai-terminal-check-in`, "post", null, {
-      extraHeaders: {
-        // "x-signature": "mYK/nV0EVzYeb+W1uZz5cqActJ390cpfGO+/g6llW1A=",
-        "x-timestamp": Math.floor(Date.now() / 1000),
-      },
-    });
+    // api/agent/ai-terminal-check-in
+    return this.makeRequest(`${this.baseURL}/userCenter/api/v1/ai/terminal/checkIn-v2`, "post", payload);
   }
 
   async getCheckin() {
     return this.makeRequest(`${this.baseURL}/userCenter/api/v1/ai/terminal/getSignInRecords`, "get");
   }
 
+  async getInviteStatus() {
+    return this.makeRequest(`${this.baseURL}/userCenter/api/v1/client/points/getInvitationStatus`, "get");
+  }
+
+  async bindCode() {
+    return this.makeRequest(`${this.baseURL}/userCenter/api/v1/client/points/enterInviteCode`, "post", {
+      code: settings.REF_CODE || "URT45769",
+    });
+  }
+
+  async getPowchangeId(message) {
+    //  "challenge_id": "29e150bea60be19f4107825ddee7af9f25727d20b7096c2530ad1b0b0b78b5cf",
+    //   "prompt": "What are the top trending DeFi pools tokens?",
+    //   "salt": "hda3zp09",
+    //   "timestamp": 1753035228,
+    //   "difficulty": 3,
+    //   "target_prefix": "000"
+    return this.makeRequest(`${this.baseURL}/api/agentopera/pow-challenge?prompt=${encodeURIComponent(message)}&llmApiKey=sk-${this.apiKey}&identifier=${this.userData?.id}`, "get", null);
+  }
+
   async getLimit() {
     return this.makeRequest(`${this.baseURL}/userCenter/api/v1/ai/terminal/getPromptPoints`, "get");
   }
 
-  async sendMess(payload) {
+  async sendMess(payload, mess) {
+    const resPow = await this.getPowchangeId(mess);
+    if (!resPow) {
+      this.log(`Can't get pow id for mess: ${mess}`, "warning");
+      return { success: false };
+    }
+    const { target_prefix, difficulty, challenge_id, salt, timestamp, prompt } = resPow.data;
+    const nonce = await Helper.getNonce(prompt, salt, timestamp, difficulty);
     return this.makeRequest(`${this.baseURL}/api/agentopera`, "post", payload, {
       extraHeaders: {
-        "x-chat-mode": "reasoning",
         "x-llm-api-key": `sk-${this.apiKey}`,
         "x-terminal-source": 2,
+        "x-pow-challenge-id": challenge_id,
+        "x-pow-difficulty": difficulty,
+        "x-pow-nonce": nonce,
       },
     });
   }
@@ -328,21 +361,22 @@ class ClientAPI {
       },
     });
   }
-  async bindCode() {
-    return this.makeRequest(
-      `${settings.BASE_URL_V2}/userCenter/api/v1/activity/enterInviteCode`,
-      "post",
-      {
-        code: settings.REF_CODE,
-        walletId: this.itemData.address,
-      },
-      {
-        extraHeaders: {
-          origin: "https://chainopera.ai",
-        },
-      }
-    );
-  }
+
+  // async bindCode() {
+  //   return this.makeRequest(
+  //     `${settings.BASE_URL_V2}/userCenter/api/v1/activity/enterInviteCode`,
+  //     "post",
+  //     {
+  //       code: settings.REF_CODE,
+  //       walletId: this.itemData.address,
+  //     },
+  //     {
+  //       extraHeaders: {
+  //         origin: "https://chainopera.ai",
+  //       },
+  //     }
+  //   );
+  // }
 
   async joinWaiting() {
     const email = getRandomElement(emails) || "duymmo@gmail.com";
@@ -383,10 +417,12 @@ class ClientAPI {
   }
 
   async handleBindCode() {
-    const resGet = await this.getWaitingList();
+    const resGet = await this.getInviteStatus();
     if (!resGet.success) return;
-    const list = resGet.data?.waitingListResponses || [];
-    const invite = list.find((i) => i.description == "invite_new_user");
+    const cantBind = resGet.data;
+    if (cantBind) {
+      const res = await this.bindCode();
+    }
   }
 
   async getValidToken(isNew = false) {
@@ -466,7 +502,7 @@ class ClientAPI {
         agentName: "Auto",
       };
       this.log(`[${limit}/${total}] Sending mess: ${mess}`);
-      const res = await this.sendMess(payload);
+      const res = await this.sendMess(payload, mess);
       if (res.success) {
         this.log(`[${limit}/${total}] Sent ${mess} success!`, "success");
       } else {
@@ -486,14 +522,75 @@ class ClientAPI {
     if (!resGet.success) return;
     const isAvaliable = this.isCheckInAvailableToday(resGet.data);
     if (isAvaliable) {
-      const resCheckin = await this.checkin();
-      if (resCheckin.success) {
-        this.log(`Checkin success!`, "success");
+      // const bnbPrice = await this.getBNBPrice();
+      // console.log(bnbPrice);
+      // onchain here
+      this.log(`Sending BNB to checkin...`);
+      const resOnchain = await this.onService.checkin(bnbPrice);
+
+      if (resOnchain.success) {
+        const payload = {
+          transactionHash: resOnchain.tx,
+          chainId: 56,
+        };
+        console.log(payload);
+
+        const resCheckin = await this.checkin(payload);
+
+        console.log(resCheckin);
+        if (resCheckin.success) {
+          this.log(`Checkin success!`, "success");
+        } else {
+          this.log(`Failed checkin ${JSON.stringify(resCheckin)}`, "warning");
+        }
       } else {
-        this.log(`Failed checkin ${JSON.stringify(resCheckin)}`, "warning");
+        this.log(resOnchain.message, "warning");
       }
     } else {
       return this.log(`You checked in today!`, "warning");
+    }
+  }
+
+  async connectRPC() {
+    try {
+      const provider = new ethers.JsonRpcProvider(settings.RPC_URL, {
+        fetch: (url, options) => {
+          options.headers = {
+            ...(options.headers || {}),
+            Origin: "https://chat.chainopera.ai",
+            Referer: "https://chat.chainopera.ai/",
+            cookie: `auth_token=${this.token}`,
+            authorization: `${this.token}`,
+            token: `${this.token}`,
+          };
+
+          if (settings.USE_PROXY) options.agent = new HttpsProxyAgent(this.proxy);
+          return fetch(url, options);
+        },
+        chainId: 56,
+        name: "BNB Smart Chain",
+      });
+      const wallet = new ethers.Wallet(this.itemData.privateKey, this.provider);
+      this.wallet = wallet;
+      this.provider = provider;
+      this.onService = new Onchain({ wallet, provider });
+      const block = await provider.getBlockNumber();
+      this.log(`Connected to block: ${block}`, "success");
+    } catch (error) {
+      this.log(`Can't connect RPC: ${settings.RPC_URL}`, "error");
+    }
+  }
+
+  async getBNBPrice() {
+    try {
+      let agent = this.proxy ? new HttpsProxyAgent(this.proxy) : null;
+      const response = await axios.get("https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd", {
+        httpAgent: agent,
+        httpsAgent: agent,
+      });
+      return response.data.binancecoin.usd;
+    } catch (error) {
+      return null;
     }
   }
 
@@ -508,12 +605,15 @@ class ClientAPI {
       retries++;
     } while (retries < 1 && userData.status !== 400);
     const blance = await this.getBalance();
+    const bnb = await this.onService.checkBalance({ provider: this.provider, wallet: this.wallet });
+
     if (userData?.success) {
       const { apiKey } = userData.data;
+      this.userData = userData.data;
       const { todayPoints, totalPoints } = blance.data;
 
       this.apiKey = apiKey;
-      this.log(`Today erning: ${todayPoints} | Total points: ${totalPoints}`, "custom");
+      this.log(`BNB: ${bnb} | Today erning: ${todayPoints} | Total points: ${totalPoints}`, "custom");
     } else {
       this.log("Can't sync new data...skipping", "warning");
     }
@@ -541,15 +641,18 @@ class ClientAPI {
     const token = await this.getValidToken();
     if (!token) return;
     this.token = token;
-
+    await this.connectRPC();
     const userData = await this.handleSyncData();
+    await this.handleBindCode();
     if (userData.success) {
       if (settings.AUTO_CHECKIN) {
         await sleep(1);
         await this.handleCheckin();
       }
-      await sleep(1);
-      await this.handleMess(userData.data);
+      if (settings.AUTO_CHAT) {
+        await sleep(1);
+        await this.handleMess(userData.data);
+      }
     } else {
       return this.log("Can't get use info...skipping", "error");
     }
@@ -638,7 +741,6 @@ async function main() {
               resolve();
             });
             worker.on("exit", (code) => {
-              worker.terminate();
               if (code !== 0) {
                 errors.push(`Worker cho tài khoản ${currentIndex} thoát với mã: ${code}`);
               }

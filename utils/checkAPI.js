@@ -25,8 +25,8 @@ async function getBaseApi(url) {
   try {
     const response = await axios.get(url);
     const content = response.data;
-    if (content?.chainopera) {
-      return { endpoint: content.chainopera, message: content.copyright };
+    if (content?.klok) {
+      return { endpoint: content.klok, message: content.copyright };
     } else {
       return {
         endpoint: null,

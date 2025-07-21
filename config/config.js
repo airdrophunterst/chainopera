@@ -17,7 +17,7 @@ const settings = {
 
   AUTO_TASK: process.env.AUTO_TASK ? process.env.AUTO_TASK.toLowerCase() === "true" : false,
   AUTO_CHECKIN: process.env.AUTO_CHECKIN ? process.env.AUTO_CHECKIN.toLowerCase() === "true" : false,
-  ENABLE_MAP_RANGE_CHALLENGE: process.env.ENABLE_MAP_RANGE_CHALLENGE ? process.env.ENABLE_MAP_RANGE_CHALLENGE.toLowerCase() === "true" : false,
+  AUTO_CHAT: process.env.AUTO_CHAT ? process.env.AUTO_CHAT.toLowerCase() === "true" : false,
 
   AUTO_SHOW_COUNT_DOWN_TIME_SLEEP: process.env.AUTO_SHOW_COUNT_DOWN_TIME_SLEEP ? process.env.AUTO_SHOW_COUNT_DOWN_TIME_SLEEP.toLowerCase() === "true" : false,
   AUTO_CLAIM_BONUS: process.env.AUTO_CLAIM_BONUS ? process.env.AUTO_CLAIM_BONUS.toLowerCase() === "true" : false,
@@ -38,7 +38,8 @@ const settings = {
   BASE_URL: process.env.BASE_URL ? process.env.BASE_URL : null,
   BASE_URL_V2: process.env.BASE_URL_V2 ? process.env.BASE_URL_V2 : null,
 
-  REF_CODE: process.env.REF_CODE ? process.env.REF_CODE : "ZNRHXLAG",
+  REF_CODE: process.env.REF_CODE ? process.env.REF_CODE : "",
+  RPC_URL: process.env.RPC_URL ? process.env.RPC_URL : "",
 
   TYPE_CAPTCHA: process.env.TYPE_CAPTCHA ? process.env.TYPE_CAPTCHA : null,
   API_KEY_2CAPTCHA: process.env.API_KEY_2CAPTCHA ? process.env.API_KEY_2CAPTCHA : null,
