@@ -117,7 +117,6 @@ function isTokenExpired(token) {
 
     return { isExpired, expirationDate };
   } catch (error) {
-    console.log(`Error checking token: ${error.message}`.red);
     return { isExpired: true, expirationDate: new Date().toLocaleString() };
   }
 }

@@ -20,13 +20,12 @@ const Onchain = require("./onchain/onchain.js");
 const questions = loadData("questions.txt");
 const emails = [];
 const twitters = [];
-
-// const refcodes = loadData("reffCodes.txt");
-let REF_CODE = settings.REF_CODE;
+const agents = require("./agens.json");
+const refcodes = loadData("refcodes.txt");
 class ClientAPI {
   constructor(itemData, accountIndex, proxy, baseURL) {
     this.headers = headers;
-    this.baseURL = baseURL;
+    this.baseURL = settings.BASE_URL;
     this.baseURL_v2 = "";
     this.localItem = null;
     this.itemData = itemData;
@@ -38,7 +37,7 @@ class ClientAPI {
     this.token = null;
     this.localStorage = localStorage;
     this.wallet = new ethers.Wallet(this.itemData.privateKey);
-    this.provider = new ethers.JsonRpcProvider(settings.BASE_URL);
+    this.provider = new ethers.JsonRpcProvider(settings.RPC_URL);
     this.apiKey = null;
     this.userData = null;
     this.onService = new Onchain({ wallet: this.wallet, provider: this.provider });
@@ -68,7 +67,6 @@ class ClientAPI {
       return this.session_user_agents[this.session_name];
     }
 
-    console.log(`[Tài khoản ${this.accountIndex + 1}] Tạo user agent...`.blue);
     const newUserAgent = this.#get_random_user_agent();
     this.session_user_agents[this.session_name] = newUserAgent;
     this.#save_session_data(this.session_user_agents);
@@ -202,20 +200,16 @@ class ClientAPI {
       } catch (error) {
         errorStatus = error.status;
         errorMessage = error?.response?.data?.message ? error?.response?.data : error.message;
-        this.log(`Request failed: ${url} | Status: ${error.status} | ${JSON.stringify(errorMessage || {})}...`, "warning");
+        // this.log(`Request failed: ${url} | Status: ${error.status} | ${JSON.stringify(errorMessage || {})}...`, "warning");
 
         if (error.message.includes("stream has been aborted")) {
           return { success: false, status: error.status, data: null, error: error.response.data.error || error.response.data.message || error.message };
         }
 
         if (error.status == 401) {
-          this.log(`Unauthorized: ${url} | trying get new token...`, "warning");
-          const token = await this.getValidToken(true);
-          if (token) {
-            process.exit(0);
-          }
-          this.token = token;
-          return await this.makeRequest(url, method, data, options);
+          this.log(`Unauthorized, token expried`, "warning");
+          await sleep(1);
+          process.exit(0);
         }
         if (error.status == 400) {
           this.log(`Invalid request for ${url}, maybe have new update from server | contact: https://t.me/airdrophuntersieutoc to get new update!`, "error");
@@ -256,10 +250,25 @@ class ClientAPI {
 
   async auth() {
     const res = await this.getNonce();
-    if (!res?.data) return { success: false, error: "Can't get nonce" };
-    const signedMessage = await this.wallet.signMessage(res.data);
+    if (!res?.data) {
+      this.log(`Can't get nonce`, "warning");
+      await sleep(1);
+      process.exit(1);
+    }
+    const { nonce } = res.data;
+    const mess = `chat.chainopera.ai wants you to sign in with your Ethereum account:
+${this.wallet.address}
+
+Sign in with Ethereum to the app.
+
+URI: https://chat.chainopera.ai
+Version: 1
+Chain ID: 688688
+Nonce: ${nonce}
+Issued At: ${new Date().toISOString()}`;
+    const signedMessage = await this.wallet.signMessage(mess);
     const payload = {
-      siweMessage: res.data,
+      siweMessage: mess,
       address: this.itemData.address,
       loginChannel: 4,
       version: "v1",
@@ -272,25 +281,26 @@ class ClientAPI {
     });
   }
 
-  async register() {
-    const res = await this.getNonce();
-    if (!res?.data) return { success: false, error: "Can't get nonce" };
-    const signedMessage = await this.wallet.signMessage(res.data);
-    const payload = {
-      siweMessage: res.data,
-      address: this.itemData.address,
-      loginChannel: 4,
-    };
-    return this.makeRequest(`${settings.BASE_URL_V2}/userCenter/api/v1/wallet/login`, "post", payload, {
-      isAuth: true,
-      extraHeaders: {
-        sign: signedMessage,
-      },
-    });
-  }
+  // async register() {
+  //   this.log(`Registing...`);
+  //   const res = await this.getNonce();
+  //   if (!res?.data) return { success: false, error: "Can't get nonce" };
+  //   const signedMessage = await this.wallet.signMessage(res.data);
+  //   const payload = {
+  //     siweMessage: res.data,
+  //     address: this.itemData.address,
+  //     loginChannel: 4,
+  //   };
+  //   return this.makeRequest(`${settings.BASE_URL_V2}/userCenter/api/v1/client/user/login`, "post", payload, {
+  //     isAuth: true,
+  //     extraHeaders: {
+  //       sign: signedMessage,
+  //     },
+  //   });
+  // }
 
   async getNonce() {
-    return this.makeRequest(`${this.baseURL}/userCenter/api/v1/wallet/getSIWEMessage-v1`, "post", { address: this.itemData.address }, { isAuth: true });
+    return this.makeRequest(`${this.baseURL}/userCenter/api/v1/wallet/getNonce`, "get", null, { isAuth: true });
   }
 
   async getUserData() {
@@ -317,7 +327,7 @@ class ClientAPI {
 
   async bindCode() {
     return this.makeRequest(`${this.baseURL}/userCenter/api/v1/client/points/enterInviteCode`, "post", {
-      code: settings.REF_CODE || "URT45769",
+      code: getRandomElement(refcodes) || "URT45769",
     });
   }
 
@@ -331,8 +341,16 @@ class ClientAPI {
     return this.makeRequest(`${this.baseURL}/api/agentopera/pow-challenge?prompt=${encodeURIComponent(message)}&llmApiKey=sk-${this.apiKey}&identifier=${this.userData?.id}`, "get", null);
   }
 
+  async getListSubsAgent() {
+    return this.makeRequest(`https://chat.chainopera.ai/agentapi/agent-subs/list`, "get");
+  }
+
   async getLimit() {
     return this.makeRequest(`${this.baseURL}/userCenter/api/v1/ai/terminal/getPromptPoints`, "get");
+  }
+
+  async getLimitInteraction() {
+    return this.makeRequest(`${this.baseURL}/userCenter/api/v1/client/points/interaction/getPoints`, "get");
   }
 
   async sendMess(payload, mess) {
@@ -361,22 +379,6 @@ class ClientAPI {
       },
     });
   }
-
-  // async bindCode() {
-  //   return this.makeRequest(
-  //     `${settings.BASE_URL_V2}/userCenter/api/v1/activity/enterInviteCode`,
-  //     "post",
-  //     {
-  //       code: settings.REF_CODE,
-  //       walletId: this.itemData.address,
-  //     },
-  //     {
-  //       extraHeaders: {
-  //         origin: "https://chainopera.ai",
-  //       },
-  //     }
-  //   );
-  // }
 
   async joinWaiting() {
     const email = getRandomElement(emails) || "duymmo@gmail.com";
@@ -416,12 +418,17 @@ class ClientAPI {
     );
   }
 
+  async handleInteractionAgent() {}
+
   async handleBindCode() {
     const resGet = await this.getInviteStatus();
     if (!resGet.success) return;
     const cantBind = resGet.data;
-    if (cantBind) {
+    if (cantBind == true) {
       const res = await this.bindCode();
+      if (res.success) {
+        this.log(`Apply ref code success!`, "success");
+      }
     }
   }
 
@@ -457,30 +464,38 @@ class ClientAPI {
     if (!signInRecords || signInRecords.length === 0) {
       return true; // No sign-in records, so check-in is available
     }
-    const lastSignIn = signInRecords[signInRecords.length - 1];
-
-    if (!lastSignIn || !lastSignIn.dayTime) {
-      return true; // No last sign-in record or missing dayTime
+    const hasRecordToday = signInRecords.find((r) => r.dayTime == utcTime);
+    if (hasRecordToday) {
+      return false;
     }
-
-    const today = new Date(utcTime).toISOString().slice(0, 10);
-    const lastSignInDay = new Date(lastSignIn.dayTime).toISOString().slice(0, 10);
-
-    return today !== lastSignInDay;
+    return true;
   }
 
   async handleMess(userData) {
-    const resGet = await this.getLimit();
-    let limit = 10;
-    let total = 10;
+    const [resGet, resInterGet] = await Promise.all([this.getLimit(), this.getLimitInteraction()]);
+    let limit = 0;
+    let total = 1;
+    let currInter = 0;
 
-    if (resGet.success) {
-      const ratio = resGet.data.pointsRatio || 0.1;
-      if (ratio == 1) return;
-      limit = Math.floor(1 / ratio);
-      total = limit;
+    const ratio = resGet.data.pointsRatio || 0;
+    const ratioInter = resInterGet.data.pointsRatio || 0;
+
+    this.log(`Points prompts earned today ${ratio * 100}% | Points interaction earned today ${ratioInter * 100}%`, "custom");
+    if (ratio == 1 && ratioInter == 1) {
+      return this.log(`Max prompt chat today!`, "warning");
     }
-    while (limit > 0) {
+
+    limit = ratio < 1 ? ratio : ratioInter;
+
+    let allAgentName = agents.map((e) => e.agentName).filter((e) => e !== null);
+    let agentName = getRandomElement(allAgentName);
+    while (limit < 1) {
+      const limitFomated = limit.toFixed(1);
+      if (currInter % 3 == 0 && currInter > 0) {
+        allAgentName = allAgentName.filter((e) => e !== agentName);
+        agentName = getRandomElement(allAgentName);
+      }
+      this.log(`Using agent name: ${agentName}`, "custom");
       const mess = getRandomElement(questions);
       const payload = {
         id: generateId(),
@@ -499,22 +514,22 @@ class ClientAPI {
         userId: userData.id,
         model: "chainopera-default",
         group: "web",
-        agentName: "Auto",
+        agentName: agentName,
       };
-      this.log(`[${limit}/${total}] Sending mess: ${mess}`);
+      this.log(`[${limitFomated}/${total}] Sending mess: ${mess}`);
       const res = await this.sendMess(payload, mess);
       if (res.success) {
-        this.log(`[${limit}/${total}] Sent ${mess} success!`, "success");
+        this.log(`[${limitFomated}/${total}] Sent ${mess} success!`, "success");
       } else {
-        this.log(`[${limit}/${total}] Sent message ${mess} failed | ${JSON.stringify(res)}`, "warning");
+        this.log(`[${limitFomated}/${total}] Sent message ${mess} failed | ${JSON.stringify(res)}`, "warning");
       }
-      if (limit > 1) {
+      if (limit < 1) {
         const timeSleep = getRandomNumber(settings.DELAY_CHAT[0], settings.DELAY_CHAT[1]);
         this.log(`Sleeping for ${timeSleep} seconds to next message...`, "info");
         await sleep(timeSleep);
       }
-
-      limit--;
+      limit += 0.1;
+      currInter++;
     }
   }
   async handleCheckin() {
@@ -522,22 +537,17 @@ class ClientAPI {
     if (!resGet.success) return;
     const isAvaliable = this.isCheckInAvailableToday(resGet.data);
     if (isAvaliable) {
-      // const bnbPrice = await this.getBNBPrice();
-      // console.log(bnbPrice);
-      // onchain here
       this.log(`Sending BNB to checkin...`);
-      const resOnchain = await this.onService.checkin(bnbPrice);
+      const resOnchain = await this.onService.checkin();
 
       if (resOnchain.success) {
         const payload = {
           transactionHash: resOnchain.tx,
           chainId: 56,
         };
-        console.log(payload);
 
         const resCheckin = await this.checkin(payload);
 
-        console.log(resCheckin);
         if (resCheckin.success) {
           this.log(`Checkin success!`, "success");
         } else {
@@ -557,11 +567,6 @@ class ClientAPI {
         fetch: (url, options) => {
           options.headers = {
             ...(options.headers || {}),
-            Origin: "https://chat.chainopera.ai",
-            Referer: "https://chat.chainopera.ai/",
-            cookie: `auth_token=${this.token}`,
-            authorization: `${this.token}`,
-            token: `${this.token}`,
           };
 
           if (settings.USE_PROXY) options.agent = new HttpsProxyAgent(this.proxy);
@@ -604,6 +609,11 @@ class ClientAPI {
       if (userData?.success) break;
       retries++;
     } while (retries < 1 && userData.status !== 400);
+    // if (userData?.data?.token) {
+    //   await saveJson(this.session_name, JSON.stringify(userData.data.token), "localStorage.json");
+    //   this.localItem = userData.data;
+    //   this.token = userData.data.token;
+    // }
     const blance = await this.getBalance();
     const bnb = await this.onService.checkBalance({ provider: this.provider, wallet: this.wallet });
 

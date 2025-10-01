@@ -36,23 +36,16 @@ class Onchain {
     }
   }
 
-  async checkin(bnbPrice) {
-    if (!bnbPrice || bnbPrice == 0) {
-      return {
-        success: false,
-        message: "Can't get BNB price",
-      };
-    }
+  async checkin() {
     try {
       const wallet = this.wallet;
       const provider = this.provider;
-      const contract = new ethers.Contract("0x0Fa0f96f676f55Afd15B9AF26e711b2aCccb89E0", ABI, wallet);
+      const contract = new ethers.Contract("0x9d720c3692175278A87B8FC5B1BC3178Ea17f28C", ABI, wallet);
       const checkInAmount = await contract.getCheckInAmount(); // trả về BigNumber
 
       const balance = await provider.getBalance(wallet.address);
-      const balanceInEther = ethers.formatEther(balance);
-
-      if (parseFloat(balanceInEther) < 0.00005) {
+      const balanceInBNB = ethers.formatEther(balance);
+      if (parseFloat(balanceInBNB) < 0.00005) {
         return {
           tx: null,
           success: false,
@@ -73,18 +66,12 @@ class Onchain {
         };
       }
 
-      const tx = await contract.checkIn({ value: checkInAmount });
-
-      // const params = {
-      //   to: "0x0Fa0f96f676f55Afd15B9AF26e711b2aCccb89E0",
-      //   data: "0x183ff085",
-      //   gasPrice: ethers.parseUnits("0.1", "gwei"),
-      //   gasLimit: 67026,
-      //   chainId: 56,
-      //   nonce: latestNonce,
-      //   value: ethers.parseUnits(valueInBNB.toFixed(18), "ether"),
-      // };
-      // const tx = await wallet.sendTransaction(params);
+      const tx = await contract.checkIn({
+        value: checkInAmount,
+        gasLimit: 67004, // Match the transaction's gas limit
+        gasPrice: ethers.parseUnits("0.1", "gwei"), // Match the transaction's gas price
+        nonce: latestNonce,
+      });
       await tx.wait(3);
 
       return {
